@@ -1,0 +1,248 @@
+
+pipeline {
+    agent any
+    triggers {  // It means that the job will be triggered automatically when a push event occurs in the associated GitHub repository
+        githubPush() 
+    }
+    parameters {
+        choice(name: 'ENV_VAR', choices: 'choose\ndev\nprod', description: 'Select Environment')// this block is responsible to take i/p while building a job
+    }
+    environment {  // USED TO export variable to environment
+        ENV_VAR = "${params.ENV_VAR}" // This line assigns the value of the 'ENV_VAR' parameter (which was defined earlier in your pipeline with the 'choice' parameter) to an environment variable named 'ENV_VAR'.
+        //${BUILD_NUMBER} is an environment variable that represents the unique identifier assigned to a specific build
+
+        major_version = '0' //major version number typically represents significant changes, often backward incompatible.
+        intermediate_version = '0' //intermediate version number is often used for minor releases or feature additions that are backward compatible.
+        minor_version = '${BUILD_NUMBER}' // minor version number is dynamically set using the ${BUILD_NUMBER} variable.<when we recompile the code>
+                version_type = 'SNAPSHOT' // This variable is set to 'SNAPSHOT'. In Maven, a version ending with '-SNAPSHOT' indicates that it's under active development and is not a release version.
+        +------------------------+--------------------------------------------------------------+
+        | Version Type           | Description                                                  |
+        +------------------------+--------------------------------------------------------------+
+        | Alpha                  | Early stage, not feature-complete, may have many bugs.        |
+        +------------------------+--------------------------------------------------------------+
+        | Beta                   | More mature than alpha, still not stable for general use.     |
+        +------------------------+--------------------------------------------------------------+
+        | Release Candidate (RC) | Feature-complete and stable for wider testing.                |
+        +------------------------+--------------------------------------------------------------+
+        | Snapshot               | Point-in-time copy of the codebase for various purposes.      |
+        +------------------------+--------------------------------------------------------------+
+        | Release                | Stable version intended for general use.                      |
+        +------------------------+--------------------------------------------------------------+
+        | Final                  | Last version within a major release before a new major version.|
+        +------------------------+--------------------------------------------------------------+
+        | Patch                  | Minor update addressing specific bugs or security issues.    |
+        +------------------------+--------------------------------------------------------------+
+        | Service Pack           | Collection of updates, bug fixes, and improvements.          |
+        +------------------------+--------------------------------------------------------------+
+        | Hotfix                 | Small update to address critical issues or security flaws.    |
+        +------------------------+--------------------------------------------------------------+
+
+
+        // PUBLISH port where application is going to be exposed 
+        prodPublishPort = "9292" // external port where application will be exposed
+        devPublishPort = "8282" // for dev
+       
+    }
+    tools {
+        maven 'Maven' /`m`aven is a variable which inherits all the configuration from jenkins manage configure named called `M`aven 
+    }
+    stages {
+        stage('Fetching Environment') {
+            steps {
+                script { 
+                    // this is used to make parametrized pipeline with github triggers
+                    // below code block is used to create a logic to explicitly select environment variable when scipt is executed via github trigger,
+                    // when script is executed manually(build now option) then below condition should be skipped 
+                    if (env.ENV_VAR == 'choose') {    
+                        env.ENVIRONMENT = input(
+                            id: 'ENVIRONMENT',
+                            message: 'Choose ENVIRONMENT:',
+                            parameters: [
+                                choice(name: 'ENVIRONMENT', choices: 'dev\nprod', description: 'Select Environment')
+                            ]
+                        )
+                    } else {
+                        env.ENVIRONMENT = "${ENV_VAR}"
+                    }  
+                    echo "ENVIRONMENT: ${env.ENVIRONMENT}"
+                }
+            }
+        }
+        stage('GetCode') {
+            steps {// Checkout step with specific branch & key credential <github clone>
+                checkout scmGit(branches: [[name: "*/${env.ENVIRONMENT}"]], extensions: [], userRemoteConfigs: [[credentialsId: 'gsanjana2712-github', url: 'https://github.com/gsanjana2712/testapp.git']])
+                // Extensions add new behavior or modify existing plugin behavior for different uses
+                // userRemoteConfigs :Specify the repository to track
+                // checkout step provides access to the Pipeline capabilities provided by the git plugin
+            }
+        }
+        stage('Build') {
+            steps {
+                sh 'mvn clean install -f pom.xml -Dproject.major_version=${major_version} -Dproject.intermediate_version=${intermediate_version} -Dproject.minor_version=${minor_version} -Dproject.version_type=${version_type}'
+                // mvn install*:
+                - *Compile*: Compiles your project's source code.
+                - *Test*: Executes any unit tests in your project.
+                - *Package*: Packages your project into a distributable format (e.g., JAR, WAR).
+                - *Install*: Installs the packaged artifact into your local Maven repository (`~/.m2/repository`). This is useful when you have multiple projects that depend on this artifact because they can reference it locally.
+                // Clean*: It cleans up any build artifacts and temporary files generated during the previous steps.
+                // -f specifies file
+
+                // -Dproject - passing Maven build properties for a Java project. These properties seem to be related to versioning.
+           }
+        }
+        stage('Test') {
+            steps {
+                sh 'mvn test -Dproject.major_version=${major_version} -Dproject.intermediate_version=${intermediate_version} -Dproject.minor_version=${minor_version} -Dproject.version_type=${version_type}'
+                // testing unit test
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: 'pom.xml'
+                    // want to allow empty test results. In some contexts, when running tests, 
+                    // if no tests are found or if all tests are ignored, it can be considered an error. 
+                    // Setting allowEmptyResults to true indicate that you want to treat this situation as acceptable and not raise an error.
+                    // target:pom.xml
+                    // if no result then false its def is false
+                }
+            }
+        }
+        // here it is used to publish and collect JUnit test results present as .xml file
+        stage('Junit Test Results') {
+            steps {
+                junit '*/**/*.xml'
+                //path :  cd /var/lib/jenkins/workspace/Mini-Assignment/
+                //  find /var/lib/jenkins/workspace/Mini-Assignment/ -name "*.xml"
+                // cat /var/lib/jenkins/workspace/Mini-Assignment/target/surefire-reports/TEST-testapp.HelloServletTest.xml
+            }
+        }
+
+        stage('SonarQube analysis') {
+            steps {
+            // module withSonarQubEnv got from sonar plugin, used to set sonar environment with configuration set in jenkins manage configuration with name 'Sonarqube'
+                withSonarQubeEnv('Sonarqube') {
+                    sh "mvn org.sonarsource.scanner.maven:sonar-maven-plugin:3.7.0.1746:sonar -Dproject.major_version=${major_version} -Dproject.intermediate_version=${intermediate_version} -Dproject.minor_version=${minor_version} -Dproject.version_type=${version_type}"
+                }
+            // org.sonarsource.scanner.maven: This is the group ID of the SonarScanner Maven plugin.
+            // sonar-maven-plugin: This is the artifact ID of the SonarScanner Maven plugin.
+            // 3.7.0.1746: This is the version of the SonarScanner Maven plugin.
+            // sonar: This is the goal of the SonarScanner plugin to execute. 
+            }
+        }
+        stage('Server') {
+            steps {
+                // credentails to connect jfrong
+                withCredentials([usernamePassword(credentialsId: 'sanjanagupta-jfrog', usernameVariable: 'USERNAME' , passwordVariable: 'PASSWORD')]) {
+                // added in manage credentials  
+                    rtServer(
+                    // module got from artifactory plugin to connect with artifact server 
+                        // ID:Configure the JFrog Platform instance ID. This ID can be used by your pipeline jobs to reference the configured instance.
+                        id: "Artifactory",
+                        url: 'http://localhost:8082/artifactory',
+                        username: "${USERNAME}",
+                        password: "${PASSWORD}",
+                        bypassProxy: true,
+                        timeout: 300
+                        // bypassProxy: true:  ignore proxy configurations for the specific task, 
+                        //allowing direct communication with external resources without going through the 
+                        //configured proxy server
+                        // timeout: 300: wait for 5 min to handshake with sonar server and then terminate if no response. 
+                                      )
+                }
+            }
+        }
+        stage('Upload') {
+            steps {
+                rtUpload(
+                // module provided by artifactory plugin in jenkins
+                    serverId: "Artifactory",
+                    // server id is used to identify on which artifact server task need to be performed."Artifactory" can be found in manage jenkins configuration.
+                    spec: '''{
+                    "files": [{
+                        "pattern": "*.war",
+                        // pattern is used to set which type of file needs to be pushed on artifact server.in this case all war file should be pushed.
+                        "target": "'''+"testapp-${env.ENVIRONMENT}"+'''"
+                        // target: it is used to set the particular artifact folder exist on jfrog server(localhost)                
+    stage('Publish build info') {
+        steps {
+            rtPublishBuildInfo(
+                serverId: "Artifactory"
+            )
+        | `jfrog rt upload | Uploads artifacts to a repository without changing their status. Used for pushing local artifacts to a remote repository.|
+        | `jfrog rt publish | Publishes artifacts in a repository, promoting them to a release status. Typically used to share and distribute finalized, stable versions.|
+
+    }
+    stage('Deploy Artifact') {
+        steps{
+            script {
+                // select publish port based on environment (dev or prod), for dev - 8282 and prod - 9292
+                // reason of not picking 8080 and 9090, is, both ports are already occupied
+                if (env.ENVIRONMENT == 'dev') {
+                    env.publishPort = "${devPublishPort}"
+                } else {
+                    env.publishPort = "${prodPublishPort}"
+                }
+                // withCredentials block is used to access JFrog credentails, those will be used below to download recently pushed artifact from server
+                withCredentials([usernamePassword(credentialsId: 'sanjanagupta-jfrog', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                    sh """
+                        // this if condition is used to check application is already running or not, 
+                        // curl command is used to fetch application response, in this case it's a HTMl page.
+                        // using grep funtion, trying to search keyword (environment) in response, if keyword found, which means app is running
+                        // -s is for silent //no process bar
+                        if curl -s http://localhost:${publishPort}/testapp/ | grep "${ENVIRONMENT}"; then
+                            echo "Application is accessible"
+                            // if app is running then, stopping tomcat server.
+                        //using shutdown.sh we are shutting tomcat down
+                            // 2>/dev/null is used to redirect error messages (stderr) to /dev/null, effectively discarding them.
+                            // || true to set command response to always positive.
+                            sudo sh /root/mini-assignment-2/${ENVIRONMENT}/apache-tomcat-9.0.73/bin/shutdown.sh 2>/dev/null || true
+                             // removing war file
+                              // -r means recursively, which is used to perform task on files in nested folder recursively
+                              // -f means forcefully deleting old artifact from server,it is used to hide the error if file not present
+                            sudo rm -rf /root/mini-assignment-2/${ENVIRONMENT}/apache-tomcat-9.0.73/webapps/testapp.war
+                        else
+                            echo "Application is not accessible"
+                        fi
+                        // downloading artifact from server using curl command and storing it to tomcat webapps directory
+                        //-u is argument for user credentials 
+                        // -o is to save your file to particular directory with particular file name
+                        //where the downloaded content will be saved
+                        // -L: to allows the reredirects. If the requested URL has moved to a different location,
+                        // it instructs curl to follow the redirection and download from the new location.
+                        //url is of server from where we r downloading the specific artifact
+                        sudo curl -u ${USERNAME}:${PASSWORD} -L -o /root/mini-assignment-2/${ENVIRONMENT}/apache-tomcat-9.0.73/webapps/testapp.war http://localhost:8082/artifactory/testapp-${ENVIRONMENT}/testapp-${major_version}.${intermediate_version}.${minor_version}-${version_type}.war
+                        // opening port in firewall
+                        sudo firewall-cmd --zone=public --add-port=${publishPort}/tcp --permanent
+                        //*Public Zone:In this mode, the firewall is more restrictive and cautious. It allows only a few specific, trusted things to come inside while blocking most other things from getting in. It's like being very careful about who you let into your house.
+
+**Private Zone**:It's a more relaxed mode where the firewall allows more things to come in because it trusts that the  computer or devices inside  are safe. So, in this mode, the firewall is more permissive and lets a wider range of things go in and out.
+
+                        // reloading firewall
+                        sudo firewall-cmd --reload
+                        // starting tomcat server
+                        sudo sh /root/mini-assignment-2/${ENVIRONMENT}/apache-tomcat-9.0.73/bin/startup.sh
+                    """
+                }
+            }
+        }
+      }
+    }
+    post {
+        always {
+        // whether script will pass or fail email notification is always sent
+            script {
+                def jobName = currentBuild.fullProjectName
+                // setting job name from predefined variable <currentBuild.fullProjectName> 
+                def buildNumber = currentBuild.number
+                // setting build no  from predefined variable      
+                emailext (
+                // a module get from email notification plugin and is used to send email whose configuration is set to manage jenkins configure 
+                    body: "Build #${buildNumber} of ${jobName} completed. Check the attached logs for details.",
+                    to: 'sanjana.gupta@nagarro.com',
+                    subject: "Build Completed - ${jobName} - #${buildNumber}",
+                    attachLog: true
+                // current jenkins job log                
+                )
+            }
+        }
+    }
+}

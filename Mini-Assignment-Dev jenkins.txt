@@ -1,0 +1,305 @@
+DOCKERFILE
+This Dockerfile is used to build a Docker image that runs a Java web application on a Tomcat server
+--FROM tomcat:9.0.73-jdk11-temurin-jammy: This line specifies the base image that will be used for the new Docker image. 
+In this case, the base image is tomcat:9.0.73-jdk11-temurin-jammy, which is a pre-built image that includes Tomcat 9.0.73 and JDK 11.
+--COPY target/testapp.war /usr/local/tomcat/webapps/testapp.war : This line copies the WAR file for the Java web application 
+to the /usr/local/tomcat/webapps directory inside the container. This directory is where Tomcat looks for web applications to deploy.
+--CMD ["catalina.sh", "run"]: This line specifies the command that will be run when the container starts.
+ In this case, it runs catalina.sh run, which starts the Tomcat server and deploys the web application.
+Overall, this Dockerfile specifies the base image, copies the WAR file for the Java web application to the container, and sets the command to start the Tomcat server and deploy the application. When this Dockerfile is used to build a Docker image, the resulting image can be run as a container to deploy and run the Java web application.
+
+
+
+
+
+pipeline {
+    agent any
+    triggers {  //It means that the job will be triggered automatically when a push event occurs in the associated GitHub repository
+        githubPush()
+    }
+    parameters {
+        choice(name: 'ENV_VAR', choices: 'choose\ndev\nprod', description: 'Select Environment')//this block is responsible to take i/p while building a job
+    }
+    environment {  //USED TO export variable to environment
+        ENV_VAR = "${params.ENV_VAR}" //This line assigns the value of the 'ENV_VAR' parameter (which was defined earlier in your pipeline with the 'choice' parameter) to an environment variable named 'ENV_VAR'.
+        DOCKER_OPTS = "-Dpermissive-script-security.enabled=true" //this plugin is used to bypass the approval of building docker img from unrestricted groovy script
+//This line sets the value of the DOCKER_OPTS environment variable to enable permissive script security for Docker. This is required to allow Jenkins to execute arbitrary scripts in Docker containers.Permissive script security is a feature in Jenkins that allows scripts to run with more permissions than they would normally have. 
+        registryCredential = 'sanjanagupta-dockerhub'//credentials saved in manage jenkins to access dockerhub
+
+PUBLISH PORT VS CONTAINER PORT:
+PUBLISH port where application is going to be expored out side container
+CONTAINER port where application is exposed inside container
+
+        prodPublishPort = "9292"//external port where containerized application will be exposed
+        devPublishPort = "8282" //for dev
+        dockerImage = '' //initializing variable
+    }
+    tools {
+        maven 'Maven' /`m`aven is a variable which inherits all the configuration from jenkins manage configure named called `M`aven 
+    }
+    stages {
+        stage('Fetching Environment') {
+            steps {
+                script { 
+//this is used to make parametrized pipeline with github triggers
+
+OPTIONAL
+//below code block is used to create a logic to explicitly select environment variable when scipt is executed via github trigger,
+//the rsn to do that whenver we execute a job via github trigger there is no provision to select value for 'ENV_VAR' choice variable so it select the first //value as default.
+//when script is executed manually(build now option) then below condition should be skipped 
+                    if (env.ENV_VAR == 'choose') {    
+                        env.ENVIRONMENT = input(
+                            id: 'ENVIRONMENT',
+                            message: 'Choose ENVIRONMENT:',
+                            parameters: [
+                                choice(name: 'ENVIRONMENT', choices: 'dev\nprod', description: 'Select Environment')
+                            ]
+                        )
+                    } else {
+                        env.ENVIRONMENT = "${ENV_VAR}"
+                    }  
+                    echo "ENVIRONMENT: ${env.ENVIRONMENT}"
+                    env.dockerImageName = "sanjanagupta2712/testapp-${env.ENVIRONMENT}"
+                }
+            }
+        }
+        stage('GetCode') {
+            steps {//Checkout step with specific branch & key credential
+                checkout scmGit(branches: [[name: "*/${env.ENVIRONMENT}"]], extensions: [], userRemoteConfigs: [[credentialsId: 'gsanjana2712-github', url: 'https://github.com/gsanjana2712/testapp.git']])
+//Extensions add new behavior or modify existing plugin behavior for different uses
+            // userRemoteConfigs :Specify the repository to track
+            //checkout step provides access to the Pipeline capabilities provided by the git plugin
+            }
+        }
+        stage('Build') {
+            steps {
+                sh 'mvn clean install -f pom.xml'
+//mvn install*:
+   - *Compile*: Compiles your project's source code.
+   - *Test*: Executes any unit tests in your project.
+   - *Package*: Packages your project into a distributable format (e.g., JAR, WAR).
+   - *Install*: Installs the packaged artifact into your local Maven repository (`~/.m2/repository`). This is useful when you have multiple projects that depend on this artifact because they can reference it locally.
+//Clean*: It cleans up any build artifacts and temporary files generated during the previous steps.
+//-f specifies file
+            }
+
+        }
+        stage('Test') {
+            steps {
+                sh 'mvn test'
+////testing unit test
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: 'pom.xml'
+//want to allow empty test results. In some contexts, when running tests, 
+//if no tests are found or if all tests are ignored, it can be considered an error. 
+//Setting allowEmptyResults to true indicate that you want to treat this situation as acceptable and not raise an error.
+//target:pom.xml
+//if no result then false its def is false
+                }
+            }
+        }
+ //here it is used to publish and collect JUnit test results present as .xml file
+        stage('Junit Test Results') {
+            steps {
+                junit '*/**/*.xml'
+            }
+        }
+
+        stage('SonarQube analysis') {
+
+            steps {
+// module withSonarQubEnv got from sonar plugin, used to set sonar environment with configuration set in jenkins manage configuration with name 'Sonarqube'
+                withSonarQubeEnv('Sonarqube') {
+                    sh "mvn org.sonarsource.scanner.maven:sonar-maven-plugin:3.7.0.1746:sonar"
+                }
+//org.sonarsource.scanner.maven: This is the group ID of the SonarScanner Maven plugin.
+//sonar-maven-plugin: This is the artifact ID of the SonarScanner Maven plugin.
+//3.7.0.1746: This is the version of the SonarScanner Maven plugin.
+//sonar: This is the goal of the SonarScanner plugin to execute. 
+
+            }
+        }
+        stage('Server') {
+            steps {
+// credentails to connect jfrong
+                withCredentials([usernamePassword(credentialsId: 'sanjanagupta-jfrog', usernameVariable: 'USERNAME' 
+//added in manage credentials  , passwordVariable: 'PASSWORD')]) {
+                    rtServer(
+//module got from artifactory plugin to connect with artifact server 
+                    
+//ID:Configure the JFrog Platform instance ID. This ID can be used by your pipeline jobs to reference the configured instance.
+                        id: "Artifactory",
+                        url: 'http://localhost:8082/artifactory',
+                        username: "${USERNAME}",
+                        password: "${PASSWORD}",
+                        bypassProxy: true,
+                        timeout: 300
+   --- //bypassProxy: true:  bypass any configured proxy settings when making network requests. If your Jenkins server or the agent running the pipeline is behind a proxy, setting this to true ensures that the step won't route its network traffic through the proxy.
+
+timeout: 300: This setting defines a timeout value of 300 seconds (5 minutes) for the step or code block. It means that if the step takes longer than 5 minutes to complete, it will be forcefully terminated. This is a way to prevent long-running or stuck steps from holding up the pipeline indefinitely.                )
+                }
+            }
+        }
+        stage('Upload') {
+            steps {
+                rtUpload(
+//module provided by artifactory plugin in jenkins
+                    serverId: "Artifactory",
+//server id is used to identify on which artifact server task need to be performed."Artifactory" can be found in manage jenkins configuration.
+
+                    spec: '''{
+                    "files": [{
+                        "pattern": "*.war",
+//pattern is used to set which type of file needs to be pushed on artifact server.in this case all war file should be pushed.
+                        "target": "'''+"testapp-${env.ENVIRONMENT}"+'''"
+//target: it is used to set the particular artifact folder exist on jfrog server(localhost)                
+
+
+    stage('Publish build info') {
+        steps {
+            rtPublishBuildInfo(
+                serverId: "Artifactory"
+            )
+        }
+    }
+    stage('Releasing Old Container') {
+//Releasing Old Container that is used to stop and remove any existing container that was created from the same Docker image as specified in the dockerImageName variable.Stopping and removing any existing container associated with the specified Docker image in a Jenkins pipeline script ensures that only one instance of the container is running at any given time.
+        steps{
+            script {
+                def container_id = sh(script: "docker ps -a -q --filter ancestor=${dockerImageName}", returnStdout: true).trim()
+//you may want to run a new container each time you build and deploy your application to test it.
+Therefore, the pipeline script needs to check if there is any existing container running with the same image name and stop and remove it before starting a new one. This ensures that only one instance of the container is running on a port and avoids conflicts or issues that could arise from having multiple instances of the same container running simultaneously.
+
+
+docker ps -a -q --filter ancestor=${dockerImageName}.
+The purpose of this command is to list all containers that are based on the specified Docker image (${dockerImageName}), whether they are currently running or not. 
+ --filter option is used to filter the list of containers based on the specified ancestor image name. The -q option is used to output only the container IDs, and the -a option is used to list all containers, not just the running ones.
+The output of this command is captured as a string using the returnStdout option, which instructs Jenkins to capture the standard output of the command and return it as a string value.
+
+//trim() method is called on the resulting string to remove any leading or trailing whitespace.
+The resulting container ID is then stored in the container_id variable, and is echoed to the console using the echo statement for debugging purposes.
+
+echo "Container id ${container_id}"
+--This is using the echo statement in a Jenkins pipeline to output the value of the container_id variable to the console log.
+purpose of this statement is to display the container ID that was obtained by executing the docker ps command earlier in the script. 
+This can be useful for debugging and troubleshooting purposes, as
+it allows you to verify that the correct container ID has been obtained and is being used in subsequent Docker commands.
+
+sh """
+                    if [ -n "$container_id" ]; then
+                        docker stop ${container_id}
+                        docker rm -f ${container_id}
+                    fi
+                """
+OPTIONAL
+This code snippet is using the sh step in a Jenkins pipeline to execute a shell script that checks if the container_id variable contains a non-empty string value. If the value is non-empty, the script stops and removes the Docker container with the specified ID.
+The script uses a conditional statement (if) to check if the value of container_id is non-empty, using the -n option of the test command (which is equivalent to the [ ] operator). If the value is non-empty, the script executes the Docker commands docker stop ${container_id} and docker rm -f ${container_id} to stop and remove the container with the specified ID, respectively.
+The docker stop command is used to gracefully stop the container by sending a SIGTERM signal to the main process running inside the container. This allows the process to perform any necessary cleanup tasks before shutting down.
+The docker rm command is used to remove the container from the system. 
+ -f option is used to force the removal of the container, even if it is currently running.
+By stopping and removing the old container, this script ensures that only one instance of the Docker container is running at a time, and avoids conflicts or inconsistencies that could arise from having multiple instances of the same container running concurrently.
+
+
+
+
+    
+    stage('Building Docker Image') {
+      steps{
+        script {
+            dockerImage = docker.build dockerImageName
+        
+
+This code block is part of a Jenkins pipeline script that builds a Docker image.
+
+dockerImage = docker.build dockerImageName: This line uses the Docker pipeline plugin for Jenkins to build a Docker image. 
+dockerImageName is a variable that contains the name and tag of the Docker image that will be built.
+ docker.build is a method provided by the Docker pipeline plugin that takes the image name as an argument and returns a Docker image object. The = assigns the Docker image object to the dockerImage variable.This causes the Dockerfile located in the current workspace to be built into a new image with the specified name and tag.
+After the image has been built, the resulting Docker image object is assigned to the dockerImage variable for later use in the pipeline.
+
+
+
+    stage('Push Docker Image to Hub') {
+      steps{
+        script {
+            docker.withRegistry( '', registryCredential) { //used to integrate default registry with docker module
+                dockerImage.push('latest')
+            
+
+
+
+    stage('Pull Docker Image to Hub') {
+      steps{
+        script {
+            docker.withRegistry( '', registryCredential) {
+                docker.image(dockerImageName).pull()
+       
+
+PUSH VS PULL
+docker push is used to upload a Docker image from a local machine to a Docker registry, while docker pull is used to download a Docker image from a registry to a local machine.
+docker push is typically used after building a Docker image to upload it to a Docker registry, where it can be stored and shared with others. The command takes the name and tag of the Docker image as arguments, and uploads the image to the specified registry.
+docker pull, on the other hand, is used to download a Docker image from a registry to a local machine. The command takes the name and tag of the Docker image as arguments, and downloads the image from the specified registry.
+-In the context of a Jenkins pipeline, docker push might be used to publish a Docker image that has been built by the pipeline to a Docker registry, while docker pull might be used to download a pre-existing Docker image that is required for the pipeline to function properly.
+
+
+
+    stage('Deploy Docker Image') {
+        steps{
+            script {
+                if (env.ENVIRONMENT == 'dev') {           //based on environment selecting publish ports
+                    env.publishPort = "${devPublishPort}"
+                } else {
+                    env.publishPort = "${prodPublishPort}"
+                }
+                def container_id = sh(script: "docker ps -a -q --filter publish=${publishPort}", returnStdout: true).trim() //fetching container id which is using container port
+//docker ps command is used to list the Docker containers that are currently running on the local machine. The -a option is used to include all containers, not just the ones that are currently running, and the -q option is used to output only the container IDs, without any additional information.
+
+The --filter option is used to filter the results of the docker ps command based on a specified criterion. In this case, the publish criterion is used to filter the results based on the published port number of the container.
+
+The output of the docker ps command is captured as a string using the sh step, and then trimmed to remove any leading or trailing whitespace using the trim() method. This results in a string containing the ID of the Docker container that matches the specified criteria.
+
+Finally, the ID of the Docker container is printed to the console using the echo statement. This allows you to verify that the correct container ID has been identified before proceeding with any actions that need to be taken on the container (such as stopping or removing it).
+                
+
+
+                sh """
+                    if [ -n "$container_id" ]; then
+                        docker stop ${container_id}
+                        docker rm -f ${container_id}
+                    fi
+                """
+                docker.image(dockerImageName).run('-p '+publishPort+':8080')
+                sh """
+                    sudo firewall-cmd --zone=public --add-port=${publishPort}/tcp --permanent
+                    sudo firewall-cmd --reload
+                """
+          
+
+Next, an if statement is used to check if a container ID was found. If a container ID was found (i.e. if the container_id variable is not empty), the docker stop and docker rm commands are used to stop and remove the container respectively.
+
+After any previous container has been stopped and removed, the docker.image(dockerImageName).run() method is used to start a new container using the specified Docker image (dockerImageName). The -p option is used to publish the container's port 8080 to the specified publishPort, which allows the container to be accessed from outside the Docker host machine.
+
+Finally, the firewall-cmd commands are used to open the specified port number (9292 in this case) in the firewall of the Docker host machine. This is necessary to allow external traffic to reach the container that is running inside the Docker environment.
+
+
+
+    post {
+        always {
+//whether script will pass or fail email notification is always sent
+            script {
+                def jobName = currentBuild.fullProjectName
+//setting job name from predefined variable  
+                def buildNumber = currentBuild.number
+          //setting build no  from predefined variable      
+                emailext (
+//a module get from email notification plugin and is used to send email whose configuration is set to manage jenkins configure 
+                    body: "Build #${buildNumber} of ${jobName} completed. Check the attached logs for details.",
+                    to: 'sanjana.gupta@nagarro.com',
+                    subject: "Build Completed - ${jobName} - #${buildNumber}",
+                    attachLog: true
+//current jenkins job log                )
+            }
+        }
+    }
+}

@@ -1,0 +1,79 @@
+used GITHUB bcz i want TO test github webhook on my account and i dont want to mess with nagarro gitlab.
+ however it is possible to migrate to gitlab FYI my all repos are pvt 
+
+
+GitHub webhook is a mechanism that allows GitHub to notify external systems or services,
+ such as continuous integration (CI) servers, when events occur in a GitHub repository
+(CI focuses on the development and testing phases of the software development lifecycle.)
+
+
+payload url is destination where GitHub sends webhook notifications.
+ we get from command 'ngrok http jenkins port'
+
+
+SONARQUBE:
+Code coverage in SonarQube refers to the measurement of how much of your source code is executed by automated tests, typically expressed as a percentage
+
+code smells" refer to common programming issues or patterns that may indicate potential problems in your code.
+Examples of code smells include long methods, complex conditions, duplicated code, and excessive comments.
+
+
+**Quality Profile:** "Quality Profile" is a set of rules and guidelines that define the coding standards and quality standards for your project. It's like a checklist of things your code should and shouldn't do, such as avoiding bugs, maintaining readability, and following best practices.
+
+**Quality Gate:** A "Quality Gate" is like a final checkpoint for your code. It's a pass or fail condition based on the rules defined in your Quality Profile. If your code meets all the criteria set in the Quality Profile, it passes the gate, indicating that it meets the required quality standards. If it doesn't meet those criteria, it fails the gate, signaling that there are issues that need to be addressed before the code can proceed further.
+
+
+"Hotspot" review refers to the identification and analysis of critical or high-impact areas in your codebase that might require immediate attention or further investigation. 
+For ex,detecting insecure methods or insufficiently protected data can help developers address security concerns early in development.
+
+
+EMAIL NOTIFICATION:
+SMTP (Simple Mail Transfer Protocol) server is a computer program or server that facilitates the sending and routing of email messages over the Internet.
+SMTP Secure (SMTPS) commonly use port 465 as the default port for secure email transmission.
+
+
+"Email Notification" is a basic feature that sends emails to notify users about the build status (e.g., success, failure) or other important events during a build job.
+
+On the other hand, "Extended Email Notification" is a plugin for Jenkins that enhances the basic email notification feature. It allows you to send more detailed and customizable email notifications. With extended email notifications, you can include additional information such as build parameters, console output, and even customize the email's appearance and recipients based on various conditions. 
+
+
+---
+JaCoCo is a commonly used Java Code Coverage library.
+Configure Your Build Tool:
+Ensure that your build tool (e.g., Maven, Gradle) is set up to use JaCoCo for code coverage. You'll need to include the JaCoCo plugin in your build configuration.
+STEPS
+1.Instrument Your Code:
+JaCoCo instruments your code to collect coverage data. This usually happens automatically when you run your tests or build your project with JaCoCo enabled.
+
+2.Generate JaCoCo Report:
+After running your tests, JaCoCo will generate a coverage report in a format like XML or HTML. You can configure JaCoCo to output this report in the desired format.
+
+3.Configure SonarQube:
+Make sure you have SonarQube installed and configured. You'll need to configure your SonarQube project settings, including the URL and authentication.
+
+4.Install SonarScanner:
+If you haven't already, install the SonarScanner tool on your system.
+
+5.Run SonarScanner:
+Execute the SonarScanner command to analyze your project. You will need to specify the project key, project name, and project version.
+
+6.Pass JaCoCo Coverage Data to SonarQube:
+You may need to specify the location of your JaCoCo coverage report and pass it to SonarQube during the analysis. This can typically be done using properties like sonar.coverage.jacoco.xmlReportPaths or similar in your SonarScanner command.
+
+
+TOMCAT OPTIMAL:
+yes it is optimal to use 2 tomcat for 2 applications bcz the same we do in docker also. each container has separate tomcat.
+
+FIREWALL:
+1. sudo:Command used in Unix-like operating systems to execute a command with superuser privileges, granting administrative access.
+
+2. firewall-cmd:Command-line tool for configuring the firewalld firewall in Linux systems.
+
+3.--zone=public: Specifies the firewall zone to which the rule will be applied. In this case, it's set to the "public" zone.
+
+4.--add-port=${publishPort}/tcp:Adds a rule to allow incoming traffic on the specified TCP port, where `${publishPort}` is a variable representing the port number.
+
+5.--permanent: Indicates that the rule should persist across system reboots.
+
+Ngrok is a tunneling service that creates secure, public URLs for local development environments. It exposes a local server to the internet, allowing remote access. Developers use Ngrok for testing webhooks, APIs, and sharing work in progress without deploying. It simplifies development workflows by providing temporary public URLs.
+
